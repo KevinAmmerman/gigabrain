@@ -136,6 +136,41 @@ const run = async () => {
     const queueText = fs.readFileSync(queuePath, 'utf8');
     assert.match(queueText, /remember_intent_missing_note/, 'review queue should record the explicit remember failure reason');
 
+    const agentEndNoise = captureFromEvent({
+      db,
+      config,
+      event: {
+        scope: 'shared',
+        agentId: 'main',
+        sessionKey: 'agent:main:main',
+        text: '✅ New session started · model: openai-codex/gpt-5.2 # Recovery Quickstart {"type":"thinking","thinking":"","thinkingSignature":"{\\"id\\":\\"rs_123\\",\\"encrypted_content\\":\\"abc\\"}"}',
+        meta: {
+          captureSource: 'agent_end',
+        },
+      },
+      runId: 'capture-unit-run',
+      reviewVersion: 'rv-capture-unit',
+      logger: { info: () => {}, warn: () => {} },
+    });
+    assert.equal(agentEndNoise.queued_review, 0, 'agent_end startup/thinking noise must not be queued for review');
+
+    const reasoningArtifact = captureFromEvent({
+      db,
+      config,
+      event: {
+        scope: 'shared',
+        agentId: 'main',
+        sessionKey: 'agent:main:main',
+        text: '{"id":"rs_123","type":"reasoning","encrypted_content":"abc"} <memory_note type="USER_FACT" confidence="0.9">broken note',
+      },
+      runId: 'capture-unit-run',
+      reviewVersion: 'rv-capture-unit',
+      logger: { info: () => {}, warn: () => {} },
+    });
+    assert.equal(reasoningArtifact.queued_review, 0, 'reasoning artifacts must not create review rows');
+    const queueRaw = fs.readFileSync(queuePath, 'utf8');
+    assert.equal(/encrypted_content/.test(queueRaw), false, 'reasoning artifacts must not be written to the review queue');
+
     // Phase 0A: Thinking block contamination must be stripped before parsing
     const thinkingContaminated = parseMemoryNotes(`
 <thinking>I should store a memory about the user's pet.</thinking>
